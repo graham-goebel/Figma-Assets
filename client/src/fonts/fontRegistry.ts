@@ -1,8 +1,10 @@
-import type { FontAsset } from '../api.ts';
+import type { FontAsset } from '../backend.ts';
 import type { Layer, TextLayer } from '../state/types.ts';
 
-/** Families registered from assets/fonts, so the picker can label them "local". */
+/** Families registered from an uploaded font, so the picker can label them "your upload". */
 const localFamilies = new Set<string>();
+/** assetIds already registered as a FontFace, so re-uploads/re-lists are a no-op. */
+const registeredAssetIds = new Set<string>();
 /** Google families we've already injected a stylesheet for. */
 const googleLinks = new Map<string, Promise<void>>();
 
@@ -11,24 +13,27 @@ export function isLocalFamily(family: string): boolean {
 }
 
 /**
- * Registers every font in assets/fonts with the document so canvas text can use it.
+ * Registers every uploaded font with the document so canvas text can use it.
  * Failures are per-font: one corrupt file must not take the rest down.
  */
 export async function registerLocalFonts(fonts: FontAsset[]): Promise<void> {
   await Promise.all(
-    fonts.map(async (font) => {
-      try {
-        const face = new FontFace(font.family, `url(${JSON.stringify(font.url)})`, {
-          weight: String(font.weight),
-          style: font.style,
-        });
-        await face.load();
-        document.fonts.add(face);
-        localFamilies.add(font.family);
-      } catch (err) {
-        console.warn(`[fonts] could not register ${font.name}:`, err);
-      }
-    }),
+    fonts
+      .filter((font) => !registeredAssetIds.has(font.assetId))
+      .map(async (font) => {
+        try {
+          const face = new FontFace(font.family, `url(${JSON.stringify(font.url)})`, {
+            weight: String(font.weight),
+            style: font.style,
+          });
+          await face.load();
+          document.fonts.add(face);
+          localFamilies.add(font.family);
+          registeredAssetIds.add(font.assetId);
+        } catch (err) {
+          console.warn(`[fonts] could not register ${font.family}:`, err);
+        }
+      }),
   );
 }
 

@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { fetchProject, fetchProjects, saveProject, zipUrl } from '../api.ts';
-import { exportToDisk, type ImageFormat } from '../export/exportImages.ts';
+import { useEffect, useState } from 'react';
+import { loadProject, saveProject } from '../backend.ts';
+import { exportAndSaveFiles, exportAndSaveZip, type ImageFormat } from '../export/exportImages.ts';
 import { useEnabledPlatforms, useStore } from '../state/store.ts';
 import PlatformDropdown from './PlatformDropdown.tsx';
+import ProjectOpenMenu from './ProjectOpenMenu.tsx';
 
 type Status = { kind: 'idle' | 'busy' | 'ok' | 'error'; message?: string };
 
@@ -16,42 +17,51 @@ export default function ExportBar() {
   const [format, setFormat] = useState<ImageFormat>('png');
   const [quality, setQuality] = useState(0.92);
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
-  const [lastExport, setLastExport] = useState<string | null>(null);
+  const [openMenu, setOpenMenu] = useState(false);
 
   const busy = status.kind === 'busy';
+
+  // Clear a stale error/success line once the user starts changing things again.
+  useEffect(() => {
+    if (status.kind === 'ok' || status.kind === 'error') {
+      const t = setTimeout(() => setStatus({ kind: 'idle' }), 6000);
+      return () => clearTimeout(t);
+    }
+  }, [status]);
 
   const handleSave = async () => {
     setStatus({ kind: 'busy', message: 'Saving…' });
     try {
-      const { name } = await saveProject(project.name, project);
-      setStatus({ kind: 'ok', message: `Saved as projects/${name}.json` });
+      await saveProject(project);
+      setStatus({ kind: 'ok', message: `Saved "${project.name}"` });
     } catch (err) {
       setStatus({ kind: 'error', message: (err as Error).message });
     }
   };
 
-  const handleOpen = async () => {
+  const handleOpenProject = async (name: string) => {
+    setOpenMenu(false);
+    setStatus({ kind: 'busy', message: `Opening "${name}"…` });
     try {
-      const { projects } = await fetchProjects();
-      if (projects.length === 0) {
-        setStatus({ kind: 'error', message: 'No saved projects yet' });
+      const loaded = await loadProject(name);
+      if (!loaded) {
+        setStatus({ kind: 'error', message: `Project "${name}" not found` });
         return;
       }
-      const name = window.prompt(`Open which project?\n\n${projects.map((p) => p.name).join('\n')}`);
-      if (!name) return;
-      setProject(await fetchProject(name));
-      setStatus({ kind: 'ok', message: `Opened ${name}` });
+      setProject(loaded);
+      setStatus({ kind: 'ok', message: `Opened "${name}"` });
     } catch (err) {
       setStatus({ kind: 'error', message: (err as Error).message });
     }
   };
 
-  const handleExport = async () => {
+  const handleExport = async (asZip: boolean) => {
     setStatus({ kind: 'busy', message: `Rendering ${platforms.length} platform(s)…` });
     try {
-      const { dir, files } = await exportToDisk(project, platforms, { format, quality });
-      setLastExport(project.name);
-      setStatus({ kind: 'ok', message: `${files.length} file(s) written to ${dir}` });
+      const files = asZip
+        ? await exportAndSaveZip(project, platforms, { format, quality })
+        : await exportAndSaveFiles(project, platforms, { format, quality });
+      setStatus({ kind: 'ok', message: `${files.length} file(s) ready to save` });
     } catch (err) {
       setStatus({ kind: 'error', message: (err as Error).message });
     }
@@ -100,20 +110,31 @@ export default function ExportBar() {
       <button type="button" onClick={newProject} disabled={busy}>
         New
       </button>
-      <button type="button" onClick={handleOpen} disabled={busy}>
-        Open
-      </button>
+      <div className="dropdown">
+        <button type="button" onClick={() => setOpenMenu((v) => !v)} disabled={busy}>
+          Open
+        </button>
+        {openMenu && <ProjectOpenMenu onPick={handleOpenProject} onClose={() => setOpenMenu(false)} />}
+      </div>
       <button type="button" onClick={handleSave} disabled={busy}>
         Save
       </button>
-      <button type="button" className="primary" onClick={handleExport} disabled={busy || platforms.length === 0}>
+      <button
+        type="button"
+        onClick={() => handleExport(true)}
+        disabled={busy || platforms.length === 0}
+        title="Save all files as one .zip"
+      >
+        Zip
+      </button>
+      <button
+        type="button"
+        className="primary"
+        onClick={() => handleExport(false)}
+        disabled={busy || platforms.length === 0}
+      >
         Export {platforms.length || ''}
       </button>
-      {lastExport && (
-        <a className="button" href={zipUrl(lastExport)} download>
-          Download .zip
-        </a>
-      )}
 
       {status.message && <span className={`status ${status.kind}`}>{status.message}</span>}
     </header>

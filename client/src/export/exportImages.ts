@@ -1,10 +1,10 @@
 import type Konva from 'konva';
+import { saveFilesAsZip, saveFilesIndividually, slugify } from '../backend.ts';
 import { OVERLAY_LAYER, getStage } from '../canvas/CanvasScene.tsx';
 import { preloadImages } from '../canvas/useImage.ts';
 import { ensureTextFontsReady } from '../fonts/fontRegistry.ts';
 import type { Platform } from '../platforms.ts';
 import { renderKey } from '../platforms.ts';
-import { postImageExport } from '../api.ts';
 import type { Project, Rect } from '../state/types.ts';
 import { cropRectFor } from './cropMath.ts';
 
@@ -144,29 +144,24 @@ export async function renderAllPlatforms(
   }));
 }
 
-async function blobToBase64(blob: Blob): Promise<string> {
-  const buffer = await blob.arrayBuffer();
-  let binary = '';
-  const bytes = new Uint8Array(buffer);
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
-
-/** Renders, then writes the files into exports/<name>/ on disk. */
-export async function exportToDisk(
+/** Renders, then offers each file to the viewer one at a time via the downloads capability. */
+export async function exportAndSaveFiles(
   project: Project,
   platforms: Platform[],
   options: ExportOptions,
-): Promise<{ dir: string; files: ExportedFile[] }> {
+): Promise<ExportedFile[]> {
   const files = await renderAllPlatforms(project, platforms, options);
+  await saveFilesIndividually(files.map(({ filename, blob }) => ({ filename, blob })));
+  return files;
+}
 
-  const payload = await Promise.all(
-    files.map(async (file) => ({ filename: file.filename, data: await blobToBase64(file.blob) })),
-  );
-
-  const result = await postImageExport(sanitiseBaseName(project.name), payload);
-  return { dir: result.dir, files };
+/** Renders, zips, and offers the single archive to the viewer. */
+export async function exportAndSaveZip(
+  project: Project,
+  platforms: Platform[],
+  options: ExportOptions,
+): Promise<ExportedFile[]> {
+  const files = await renderAllPlatforms(project, platforms, options);
+  await saveFilesAsZip(`${slugify(project.name)}.zip`, files.map(({ filename, blob }) => ({ filename, blob })));
+  return files;
 }

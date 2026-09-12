@@ -1,39 +1,42 @@
-import { useEffect, useState } from 'react';
-import { type AssetFile, type FontAsset, fetchAssets } from '../api.ts';
-import { registerLocalFonts } from '../fonts/fontRegistry.ts';
+import { useEffect, useRef, useState } from 'react';
+import { type ImageAsset, listImages, uploadImage } from '../backend.ts';
 import { useStore } from '../state/store.ts';
 
 export default function AssetBrowser() {
   const addImageLayer = useStore((s) => s.addImageLayer);
-  const bumpFontsVersion = useStore((s) => s.bumpFontsVersion);
 
-  const [images, setImages] = useState<AssetFile[]>([]);
-  const [fonts, setFonts] = useState<FontAsset[]>([]);
+  const [images, setImages] = useState<ImageAsset[]>([]);
   const [filter, setFilter] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const refresh = () => listImages().then(setImages).catch((err: Error) => setError(err.message));
 
   useEffect(() => {
-    fetchAssets()
-      .then(async (assets) => {
-        setImages(assets.images);
-        setFonts(assets.fonts);
-        await registerLocalFonts(assets.fonts);
-        // Fonts are now measurable — force text nodes to re-measure.
-        bumpFontsVersion();
-      })
-      .catch((err: Error) => setError(err.message));
-  }, [bumpFontsVersion]);
+    refresh();
+  }, []);
 
-  const add = (image: AssetFile) => {
-    // Size the new layer to the image's own aspect ratio.
-    const probe = new Image();
-    probe.src = image.url;
-    probe
-      .decode()
-      .then(() =>
-        addImageLayer(image.url, image.name, probe.naturalWidth / probe.naturalHeight || 1),
-      )
-      .catch(() => addImageLayer(image.url, image.name, 1));
+  const upload = async (files: FileList | File[]) => {
+    const list = [...files].filter((f) => f.type.startsWith('image/'));
+    if (list.length === 0) return;
+    setUploading(true);
+    setError(null);
+    try {
+      for (const file of list) {
+        const asset = await uploadImage(file);
+        setImages((prev) => [asset, ...prev]);
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const add = (image: ImageAsset) => {
+    addImageLayer(image.url, image.name, image.width / image.height || 1);
   };
 
   const visible = images.filter((i) => i.name.toLowerCase().includes(filter.toLowerCase()));
@@ -47,31 +50,62 @@ export default function AssetBrowser() {
 
       {error && <p className="error">{error}</p>}
 
+      <button
+        type="button"
+        className={`dropzone${dragOver ? ' is-over' : ''}`}
+        onClick={() => fileInput.current?.click()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          void upload(e.dataTransfer.files);
+        }}
+      >
+        {uploading ? 'Uploading…' : 'Drop images here, or click to choose'}
+      </button>
       <input
-        className="search"
-        placeholder="Filter images…"
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
+        ref={fileInput}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          if (e.target.files) void upload(e.target.files);
+          e.target.value = '';
+        }}
       />
 
-      {images.length === 0 && !error ? (
-        <p className="empty">
-          Drop images into <code>assets/images/</code> and refresh.
-        </p>
+      {images.length > 0 && (
+        <input
+          className="search"
+          placeholder="Filter images…"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+        />
+      )}
+
+      {images.length === 0 && !uploading ? (
+        <p className="empty">Upload an image to add your first layer.</p>
       ) : (
         <div className="asset-grid">
           {visible.map((image) => (
-            <button key={image.name} type="button" className="asset" onClick={() => add(image)} title={image.name}>
+            <button
+              key={image.assetId}
+              type="button"
+              className="asset"
+              onClick={() => add(image)}
+              title={image.name}
+            >
               <img src={image.url} alt={image.name} loading="lazy" />
               <span>{image.name}</span>
             </button>
           ))}
         </div>
       )}
-
-      <p className="muted small">
-        {fonts.length} local font{fonts.length === 1 ? '' : 's'} loaded from <code>assets/fonts/</code>
-      </p>
     </section>
   );
 }
