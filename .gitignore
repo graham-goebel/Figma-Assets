@@ -4,3 +4,10 @@ build/
 .env
 .DS_Store
 *.log
+
+# User content and generated output
+assets/images/*
+assets/videos/*
+assets/fonts/*
+!assets/**/.gitkeep
+exports/
